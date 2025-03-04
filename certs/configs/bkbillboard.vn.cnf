@@ -5,11 +5,12 @@ x509_extensions = v3_req
 
 [req_distinguished_name]
 countryName = VN
+organizationName = BK Billboard
 commonName = Billboard-CA
 
 [ v3_req ]
 basicConstraints = critical, CA:TRUE
-keyUsage=critical, digitalSignature, keyEncipherment, keyCertSign
+keyUsage = keyCertSign
 extendedKeyUsage = critical, clientAuth,serverAuth
 subjectKeyIdentifier = hash
 

@@ -4,3 +4,12 @@ subjectAltName = @alt_names
 
 [alt_names]
 DNS.1 = localhost
+
+[req]
+prompt = no
+distinguished_name = req_distinguished_name
+
+[req_distinguished_name]
+countryName = VN
+organizationName = BK Billboard
+commonName = raspi001
