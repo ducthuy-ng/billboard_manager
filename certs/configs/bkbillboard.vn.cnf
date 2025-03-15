@@ -11,7 +11,7 @@ commonName = Billboard-CA
 [ v3_req ]
 basicConstraints = critical, CA:TRUE
 keyUsage = keyCertSign
-extendedKeyUsage = critical, clientAuth,serverAuth
+extendedKeyUsage = clientAuth,serverAuth
 subjectKeyIdentifier = hash
 
 subjectAltName = @alt_names
