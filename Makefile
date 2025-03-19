@@ -1,3 +1,4 @@
+all: certs/raspi001.cert.pem
 certs/ca.key.pem certs/ca.cert.pem:
 	openssl req -x509 -newkey rsa:2048 \
 				-noenc -keyout certs/ca.key.pem \
@@ -18,7 +19,6 @@ certs/raspi001.cert.pem: certs/raspi001.csr.pem certs/ca.key.pem certs/ca.cert.p
 		-extfile ./certs/configs/raspi001.ext.cnf \
 		-out certs/raspi001.cert.pem 
 
-all: certs/raspi001.cert.pem
 
 clean:
 	rm -f certs/*.pem
