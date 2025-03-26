@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Logs</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.0/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap-icons/1.10.5/font/bootstrap-icons.min.css">
+
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 800px;
+        }
+        .card {
+            border-radius: 12px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+        }
+        .log-list {
+            list-style: none;
+            padding: 0;
+        }
+        .log-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            background: white;
+            box-shadow: 0px 2px 5px rgba(0, 0, 0, 0.1);
+            font-family: monospace;
+        }
+    </style>
+</head>
+
+<body>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+        <div class="container">
+            <a class="navbar-brand" href="/">Digital Signage</a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav"
+                aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/">Home</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/logs"><i class="bi bi-file-earmark-text"></i> Logs</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <h2 class="text-center mb-4"><i class="bi bi-file-earmark-text"></i> Server Logs</h2>
+        <div class="card p-4">
+            <ul class="log-list">
+                {% for log in logs %}
+                <li class="log-item">{{ log.strip() }}</li>
+                {% else %}
+                <li class="text-muted">No logs found.</li>
+                {% endfor %}
+            </ul>
+        </div>
+        <!-- <div class="text-center mt-3">
+            <a href="/" class="btn btn-primary"><i class="bi bi-arrow-left"></i> Back to Home</a>
+        </div> -->
+    </div>
+</body>
+
+</html>

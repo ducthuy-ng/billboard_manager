@@ -1,134 +1,146 @@
-import logging
-import os
-import shutil
-import signal
 import socket
 import ssl
-import subprocess
+import hashlib
+import os
+import signal
+import sys
+import pickle
+import sqlite3
+import threading
+import logging
 
-# Global flag to stop the server
-RUNNING = True
+LOG_FOLDER = "logs/"
+os.makedirs(LOG_FOLDER, exist_ok=True)
 
-
-# Server settings
-HOST = "0.0.0.0"
-PORT = 8080
-VIDEO_INPUT = "./video/input.mp4"  # Original video
-VIDEO_OUTPUT = "./video/output.mp4"  # Compressed video
-
-
-def handle_signal(signum, frame):
-    global RUNNING
-    logging.info("Shutting down server...")
-    RUNNING = False
-
-
-# Compress video using FFmpeg
-def compress_video(input_file, output_file):
-    if not os.path.exists(input_file):
-        logging.error(f"Video file {input_file} not found.")
-        return False
-
-    logging.info(f"Compressing {input_file}...")
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        input_file,
-        "-c:v",
-        "libx264",
-        "-crf",
-        "23",
-        "-preset",
-        "slow",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-movflags",
-        "+faststart",
-        output_file,
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler("logs/server.log"),
+        logging.StreamHandler(sys.stdout)
     ]
+)
+
+VIDEO_FOLDER = "server_videos/"
+DB_PATH = "instance/digital_signage.db"
+MAX_BUFFER = 4096
+DELIMITER = b"\n\nEND\n\n"
+
+os.makedirs(VIDEO_FOLDER, exist_ok=True)
+
+def get_video_hash():
+    """Fetch the hashes of non-deleted videos from the database."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT hash FROM video WHERE deleted = 0 ORDER BY order_index ASC, date_added ASC, filename ASC")
+        rows = cursor.fetchall()
+        return tuple(row[0] for row in rows)
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+        return None
+    finally:
+        conn.close()
+
+def receive_client_order(conn):
+    """Receive and parse the client's video order list."""
+    buffer = b""
+    while DELIMITER not in buffer:
+        try:
+            chunk = conn.recv(MAX_BUFFER)
+            if not chunk:
+                logging.warning("Client disconnected unexpectedly during data reception.")
+                return None
+            buffer += chunk
+        except ConnectionResetError:
+            logging.warning("Client forcibly closed the connection.")
+            return None
+        except Exception as e:
+            logging.error(f"Error receiving data: {e}")
+            return None
 
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        data, _ = buffer.split(DELIMITER, 1)
+        return pickle.loads(data)
+    except (pickle.PickleError, ValueError) as e:
+        logging.error(f"Error parsing client order: {e}")
+        return None
 
-        original_size = os.path.getsize(input_file)
-        compressed_size = os.path.getsize(output_file)
+def handle_client(conn, addr):
+    """Handle client requests and send missing videos."""
+    try:
+        logging.info(f"New client connected: {addr}")
+        client_order = receive_client_order(conn)
+        # if client_order is None:
+        #     return
 
-        if compressed_size >= original_size:
-            logging.warning(f"Compressed file {output_file} is larger than original. Copying original instead.")
-            shutil.copy2(input_file, output_file)
-            # copy_cmd = ["ffmpeg", "-y", "-i", input_file, "-c", "copy", output_file]
-            # subprocess.run(copy_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return True
+        server_order = get_video_hash()
+        if client_order == server_order or not server_order:
+            conn.sendall(DELIMITER)
+            logging.info(f"No new videos for client {addr}.")
+            return
 
-        logging.info(f"Compression successful: {output_file} (Size reduced)")
-        return True
+        conn.sendall(pickle.dumps(server_order) + DELIMITER)
+        logging.info(f"Sent video hash list to client {addr}.")
 
-    except subprocess.CalledProcessError:
-        logging.error("FFmpeg compression failed.")
-        return False
+        if sorted(client_order) == sorted(server_order):
+            return
+
+        missing_files = [h for h in server_order if h not in client_order]
+        for h in missing_files:
+            file_path = os.path.join(VIDEO_FOLDER, f"{h}.mp4")
+            try:
+                with open(file_path, "rb") as f:
+                    while chunk := f.read(MAX_BUFFER):
+                        conn.sendall(chunk)
+                conn.sendall(DELIMITER)
+                logging.info(f"Sent video file {file_path} to client {addr}.")
+            except FileNotFoundError:
+                logging.warning(f"Missing file {file_path} requested by client {addr}.")
+            except Exception as e:
+                logging.error(f"Error sending file {file_path} to client {addr}: {e}")
+
     except Exception as e:
-        logging.error(f"Unexpected error: {e}")
-        return False
+        logging.error(f"Error handling client {addr}: {e}")
+    finally:
+        conn.close()
+        logging.info(f"Connection closed: {addr}")
 
+def signal_handler(sig, frame):
+    """Graceful shutdown handler."""
+    logging.info("Shutting down server...")
+    sys.exit(0)
 
-# Start server
 def start_server():
-    # Set up TLS
-    ssl_context = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH, cafile="./certs/ca.cert.pem")
-    ssl_context.verify_mode = ssl.CERT_REQUIRED
-    ssl_context.load_cert_chain("./certs/server.cert.pem", "./certs/server.key.pem")
+    """Initialize the server and listen for client connections."""
+    signal.signal(signal.SIGINT, signal_handler)
 
-    # Create socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((HOST, PORT))
-        sock.listen(5)
-        logging.info(f"Server listening on {HOST}:{PORT}")
+    context = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH)
+    context.load_cert_chain(certfile="./certs/server.cert.pem", keyfile="./certs/server.key.pem")
+    context.load_verify_locations(cafile="./certs/ca.cert.pem")
+    context.verify_mode = ssl.CERT_REQUIRED
 
-        with ssl_context.wrap_socket(sock, server_side=True) as ssl_sock:
-            while RUNNING:
-                try:
-                    ssl_sock.settimeout(1)  # Allow periodic checks for stopping
-                    conn, addr = ssl_sock.accept()
-                    logging.info(f"Client connected: {addr}")
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server_socket.bind(("0.0.0.0", 8443))
+    server_socket.listen(5)
+    
+    logging.info("Server listening on port 8443...")
 
-                    # Compress video before sending
-                    # if compress_video(VIDEO_INPUT, VIDEO_OUTPUT):
-                    #     send_video(conn, VIDEO_OUTPUT)
-                    send_video(conn, VIDEO_INPUT)
+    while True:
+        try:
+            conn, addr = server_socket.accept()
+            conn = context.wrap_socket(conn, server_side=True)
 
-                    conn.close()
-                except socket.timeout:
-                    continue  # Allows loop to check 'running' flag
-                except Exception as e:
-                    logging.error(f"Error: {e}")
+            client_thread = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+            client_thread.start()
 
-    logging.info("Server stopped.")
-
-
-# Send video file in chunks
-def send_video(conn, file_path):
-    try:
-        with open(file_path, "rb") as f:
-            while chunk := f.read(4096):  # 4KB chunk size
-                conn.sendall(chunk)
-        logging.info(f"Sent video: {file_path}")
-    except Exception as e:
-        logging.error(f"Error sending video: {e}")
-
-
-def main():
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
-
-    # Configure logging
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-    start_server()
-
+        except ssl.SSLError as e:
+            logging.error(f"SSL error: {e}")
+        except socket.error as e:
+            logging.error(f"Socket error: {e}")
+        except Exception as e:
+            logging.critical(f"Unexpected server error: {e}")
 
 if __name__ == "__main__":
-    main()
+    start_server()
