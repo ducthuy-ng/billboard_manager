@@ -24,15 +24,32 @@ uv sync
 
 uv sẽ tạo thư mục `.venv`, tương tự như Python Virtual Environment (môi trường ảo).
 
-# Chạỵ code
+## Tạo file certificate
+Nếu dùng OS Windows, cài MSYS2. Xem cách tải tại đây: https://www.msys2.org/#installation
 
-Có 2 file code: `main.py` sẽ làm file server, và `billboard.py` sẽ làm file client.
+
+```shell
+cd billboard_manager
+
+# Tạo file certificate
+make
+
+# Xóa file certificate
+make clean
+```
+
+## Chạỵ code
+
+Có 3 file code: `app.py` sẽ làm web server, `server.py` sẽ làm file sync server, và `client.py` sẽ làm file client.
 Muốn chạy file nào, thực hiện
 
 ```shell
-# Chạy file server
-uv run main.py
+# Chạy file sync server
+uv run app.py
+
+# Chạy file sync server
+uv run server.py
 
 # Chạy file client
-uv run billboard.py
+uv run client.py
 ```
