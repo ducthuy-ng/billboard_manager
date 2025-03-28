@@ -28,6 +28,7 @@ MAX_RETRIES = 3
 MAX_BUFFER = 4096
 DELIMITER = b"\n\nEND\n\n"
 PLAYLIST_FILE = "playlist.m3u"
+MISSING_THRESHOLD = 0.25
 
 os.makedirs(VIDEO_FOLDER, exist_ok=True)
 os.makedirs(TEMP_FOLDER, exist_ok=True)
@@ -99,17 +100,17 @@ def receive_missing_files(conn, initial_data):
                 new_file_path = os.path.join(VIDEO_FOLDER, f"{compute_file_hash(file_path)}.mp4")
                 missing_files.append((file_path, new_file_path))
         index += 1
-
+    logging.info(f"Downloading {index - 1} missing file{'s' if (index - 1) > 1 else ''}...")
     return missing_files
 
-def check_have_all_files(new_order_set, missing_files):
+def get_unavailable_files(new_order_set, missing_files):
     for temp_file_path, _ in missing_files:
         new_order_set.discard(compute_file_hash(temp_file_path))
 
     for file in os.listdir(VIDEO_FOLDER):
         file_path = os.path.join(VIDEO_FOLDER, file)
         new_order_set.discard(compute_file_hash(file_path))
-    return not new_order_set
+    return new_order_set
 
 def save_playlist(video_list):
     with open(PLAYLIST_FILE, "w") as f:
@@ -124,7 +125,7 @@ def is_vlc_running():
         logging.error("tasklist command not found.")
         return False
 
-def restart_vlc():
+def restart_vlc(restart=True):
     if is_vlc_running():
         try:
             subprocess.run(["taskkill", "/IM", "vlc.exe", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -135,9 +136,14 @@ def restart_vlc():
         logging.info("VLC not running.")
 
     time.sleep(1)
+    
+    if not restart:
+        return
 
     try:
-        subprocess.Popen(["vlc", "--loop", "--playlist-autostart", "--no-video-title-show", PLAYLIST_FILE], 
+        subprocess.Popen(["vlc", "--loop", "--playlist-autostart", "--no-video-title-show"
+                          , "--rate", "4"
+                          , PLAYLIST_FILE], 
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         logging.info("VLC started.")
     except FileNotFoundError:
@@ -160,25 +166,37 @@ def request_videos():
                 return
 
             new_order = pickle.loads(response)
-            logging.info("Downloading missing files...")
             missing_files = receive_missing_files(conn, remaining_data)
             new_order_set = set(new_order)
-            if check_have_all_files(new_order_set.copy(), missing_files):
+            unavailable_files = get_unavailable_files(new_order_set.copy(), missing_files)
+
+            if len(new_order_set) != 0 and len(unavailable_files) / len(new_order_set) > MISSING_THRESHOLD:
+                update = False
+            else:
+                update = True
+                new_order_set -= unavailable_files
+                new_order = tuple(item for item in new_order if item not in unavailable_files)
+
+            if update:
+                logging.info("Updating playlist order.")
+                save_playlist(new_order)
+
+                for temp_file_path, new_file_path in missing_files:
+                    shutil.move(temp_file_path, new_file_path)
+
+                if new_order:
+                    restart_vlc()
+                else:
+                    restart_vlc(False)
+
                 for file in os.listdir(VIDEO_FOLDER):
                     file_path = os.path.join(VIDEO_FOLDER, file)
                     if compute_file_hash(file_path) not in new_order_set:
                         os.remove(file_path)
-
-                for temp_file_path, new_file_path in missing_files:
-                    shutil.move(temp_file_path, new_file_path)
-                delete_folder_contents(TEMP_FOLDER)
-
-                logging.info("Updating playlist order.")
-                save_playlist(new_order)
-                restart_vlc()
             else:
-                logging.error("Missing files.")
+                logging.error("Missing too many files.")
 
+            delete_folder_contents(TEMP_FOLDER)
     logging.info(f"Playing videos in order: {new_order}")
 
 if __name__ == "__main__":

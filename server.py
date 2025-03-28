@@ -75,7 +75,7 @@ def handle_client(conn, addr):
         #     return
 
         server_order = get_video_hash()
-        if client_order == server_order or not server_order:
+        if client_order == server_order:
             conn.sendall(DELIMITER)
             logging.info(f"No new videos for client {addr}.")
             return
